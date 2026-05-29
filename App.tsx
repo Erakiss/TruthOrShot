@@ -62,10 +62,12 @@ export default function App() {
   // 2. Fonction appelée quand on clique sur un niveau de difficulté
   const handleDrawCard = async (difficulty: 'SOFT' | 'FUN' | 'HOT') => {
     if (chosenType) {
-      // On interroge SQLite
       const card = await getRandomCard(chosenType, difficulty);
-      // On met la carte dans l'état (ce qui va mettre à jour l'écran instantanément)
-      setCurrentCard(card);
+      if (card) {
+        setCurrentCard(card);
+      } else {
+        alert("Oups, aucune carte trouvée pour ce niveau dans la base !");
+      }
     }
   };
 
