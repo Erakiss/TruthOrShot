@@ -7,9 +7,10 @@ export type Card = {
   difficulty: 'SOFT' | 'FUN' | 'HOT';
   content: string;
   shots: number;
+  targetGender?: 'M' | 'F'; // <-- LE NOUVEAU CHAMP OPTIONNEL
 };
 
-// On sort nos cartes de test pour pouvoir y accéder directement sur le web
+// Nos cartes de test
 const initialCards: Card[] = [
   // --- SOFT ---
   { type: 'ACTION', difficulty: 'SOFT', content: 'Fais le tour de la maison à cloche-pied.', shots: 1 },
@@ -40,43 +41,46 @@ const initialCards: Card[] = [
   // --- HOT ---
   { type: 'ACTION', difficulty: 'HOT', content: 'Enlève un vêtement de ton choix.', shots: 3 },
   { type: 'ACTION', difficulty: 'HOT', content: 'Fais un massage des épaules de 30 secondes au joueur à ta gauche.', shots: 3 },
-  { type: 'ACTION', difficulty: 'HOT', content: 'Choisis un joueur et laisse-le te faire un bisou dans le cou.', shots: 3 },
+  { type: 'ACTION', difficulty: 'HOT', content: 'Choisis un joueur et laisse-le te faire un bisou sur la joue ou dans le cou.', shots: 3 },
   { type: 'ACTION', difficulty: 'HOT', content: 'Chuchote quelque chose de coquin à l\'oreille de ton choix.', shots: 3 },
   { type: 'ACTION', difficulty: 'HOT', content: 'Fais une pose suggestive pendant 10 secondes.', shots: 3 },
   
   { type: 'VERITE', difficulty: 'HOT', content: 'As-tu déjà fantasmé sur un prof ou un supérieur ?', shots: 4 },
   { type: 'VERITE', difficulty: 'HOT', content: 'Trouves-tu quelqu\'un du groupe attirant ? Qui ?', shots: 4 },
   { type: 'VERITE', difficulty: 'HOT', content: 'Quel est ton fantasme le plus inavouable ?', shots: 4 },
-  { type: 'VERITE', difficulty: 'HOT', content: 'À quel âge as-tu perdu ton pucelage ?', shots: 4 },
+  { type: 'VERITE', difficulty: 'HOT', content: 'À quel âge as-tu perdu ta viginité?', shots: 4 },
   { type: 'VERITE', difficulty: 'HOT', content: 'Quelle est la partie de ton corps que tu préfères montrer ?', shots: 4 },
+  
+  // --- NOUVELLES CARTES GENRÉES (TEST) ---
+  { type: 'ACTION', difficulty: 'HOT', content: 'Enlève ton soutif sans enlever ton t-shirt, tu as 30 secondes.', shots: 3, targetGender: 'F' }, 
+  { type: 'ACTION', difficulty: 'HOT', content: 'Enlève ton t-shirt en utilisant qu\'une seule main.', shots: 3, targetGender: 'M' }, 
+  { type: 'VERITE', difficulty: 'FUN', content: 'Quel est le pire tue-l\'amour chez un garçon selon toi ?', shots: 2, targetGender: 'F' },
+  { type: 'VERITE', difficulty: 'FUN', content: 'Quel est le pire tue-l\'amour chez une fille selon toi ?', shots: 2, targetGender: 'M' },
 ];
 
 export async function initDatabase() {
-  // Si on est sur le navigateur web, on coupe la fonction ici
-  if (Platform.OS === 'web') {
-    console.log("Mode Web détecté : SQLite désactivé, utilisation des cartes de test en mémoire.");
-    return;
-  }
-
-  // Mode Smartphone (Le vrai SQLite)
+  if (Platform.OS === 'web') return;
   const db = await SQLite.openDatabaseAsync('truthorshot.db');
-
+  
+  // ASTUCE : On supprime l'ancienne table pour forcer la recréation avec la nouvelle colonne "targetGender"
+  await db.execAsync('DROP TABLE IF EXISTS cards');
+  
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS cards (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      type TEXT NOT NULL,
-      difficulty TEXT NOT NULL,
-      content TEXT NOT NULL,
-      shots INTEGER NOT NULL
+      type TEXT,
+      difficulty TEXT,
+      content TEXT,
+      shots INTEGER,
+      targetGender TEXT
     );
   `);
 
   const result = await db.getFirstAsync<{ count: number }>('SELECT COUNT(*) as count FROM cards');
   
   if (result && result.count === 0) {
-    console.log("Base de données vide : Insertion des cartes...");
     const statement = await db.prepareAsync(
-      'INSERT INTO cards (type, difficulty, content, shots) VALUES ($type, $difficulty, $content, $shots)'
+      'INSERT INTO cards (type, difficulty, content, shots, targetGender) VALUES ($type, $difficulty, $content, $shots, $targetGender)'
     );
 
     for (const card of initialCards) {
@@ -84,28 +88,33 @@ export async function initDatabase() {
         $type: card.type,
         $difficulty: card.difficulty,
         $content: card.content,
-        $shots: card.shots
+        $shots: card.shots,
+        $targetGender: card.targetGender || null // On met NULL si la carte est mixte
       });
     }
     await statement.finalizeAsync();
   }
 }
 
-export async function getRandomCard(type: 'ACTION' | 'VERITE', difficulty: 'SOFT' | 'FUN' | 'HOT'): Promise<Card | null> {
-  // Sur navigateur, on pioche simplement une carte au hasard dans notre tableau initialCards
+// On ajoute le paramètre "playerGender" à la pioche
+export async function getRandomCard(type: 'ACTION' | 'VERITE', difficulty: 'SOFT' | 'FUN' | 'HOT', playerGender: 'M' | 'F'): Promise<Card | null> {
   if (Platform.OS === 'web') {
-    const filteredCards = initialCards.filter(c => c.type === type && c.difficulty === difficulty);
-    if (filteredCards.length === 0) return null; // Sécurité si la catégorie est vide
+    // Sur navigateur : on filtre pour ne garder que les cartes mixtes OU celles du bon sexe
+    const filteredCards = initialCards.filter(c => 
+      c.type === type && 
+      c.difficulty === difficulty &&
+      (!c.targetGender || c.targetGender === playerGender)
+    );
+    if (filteredCards.length === 0) return null;
     const randomIndex = Math.floor(Math.random() * filteredCards.length);
     return filteredCards[randomIndex];
   }
 
-  // Sur mobile, on interroge la vraie base de données
+  // Sur mobile : Requête SQL adaptée
   const db = await SQLite.openDatabaseAsync('truthorshot.db');
   const card = await db.getFirstAsync<Card>(
-    'SELECT * FROM cards WHERE type = $type AND difficulty = $diff ORDER BY RANDOM() LIMIT 1',
-    { $type: type, $diff: difficulty } // Utilisation de variables sécurisées
+    'SELECT * FROM cards WHERE type = ? AND difficulty = ? AND (targetGender IS NULL OR targetGender = ?) ORDER BY RANDOM() LIMIT 1',
+    [type, difficulty, playerGender]
   );
-  
   return card;
 }
